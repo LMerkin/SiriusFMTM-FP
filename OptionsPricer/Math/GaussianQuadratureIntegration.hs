@@ -1,6 +1,6 @@
-module GaussianQuadratureIntegration (nIntegrate128, nIntegrate256, nIntegrate512, nIntegrate1024) where
+module Math.GaussianQuadratureIntegration (nIntegrate128, nIntegrate256, nIntegrate512, nIntegrate1024) where
 
-import GaussianQuadratureRules
+import Math.GaussianQuadratureRules
 import Data.List
 
 baseCase :: (Fractional a) => (a -> a) -> [a] -> [a] -> a

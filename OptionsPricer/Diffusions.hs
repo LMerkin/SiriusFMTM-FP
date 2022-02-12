@@ -30,6 +30,7 @@ data VolType1D =
 -- TODO: For the moment, we do not provide a symbolic form for the trend "mu"...
 
 data Diff1D = Diff1D
+  {
     m_volType  :: VolType1D,
     m_mu       :: Common.Px -> Common.Time -> Double,
     m_sigma    :: Common.Px -> Common.Time -> Double,

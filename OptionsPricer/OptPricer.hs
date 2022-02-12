@@ -14,7 +14,7 @@ import qualified Common
 import qualified Diffusions
 import qualified Contracts
 import qualified Data.Number.Erf
-import qualified GaussianQuadratureIntegration
+import qualified Math.GaussianQuadratureIntegration
 
 -------------------------------------------------------------------------------
 -- General Option Pricer Type:                                               --
@@ -258,7 +258,7 @@ bsmOptPx (Contracts.AnyPOF phi) onFut expT volTF rTF divsTF numEnv
 
   -- Integrate using the Gauss-Legendre method:
   intGL :: Double
-  intGL =  GaussianQuadratureIntegration.nIntegrate1024 integrand a b
+  intGL =  Math.GaussianQuadratureIntegration.nIntegrate1024 integrand a b
 
   -- Option Px:
   optPx :: Double
