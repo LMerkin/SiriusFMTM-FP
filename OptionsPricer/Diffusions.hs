@@ -1,6 +1,6 @@
 module Diffusions
 (
-  VolType1D(..), Diff1D, getVolType1D, getMu1D, getSigma1D,
+  VolType1D(..), Diff1D, getVolType1D, getMu1D, getSigma1D, isNonNeg,
   mkGBM
 )
 where
@@ -48,6 +48,9 @@ getMu1D        =  m_mu
 
 getSigma1D     :: Diff1D -> (Common.Px -> Common.Time -> Double)
 getSigma1D     =  m_sigma
+
+isNonNeg       :: Diff1D -> Bool
+isNonNeg       =  m_isNonNeg
 
 ------------------------------------------------------------------------------
 -- GBM:                                                                     --

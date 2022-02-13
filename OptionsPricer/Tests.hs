@@ -5,6 +5,8 @@ import qualified Common
 import qualified Diffusions
 import qualified Contracts
 import qualified OptPricer
+import qualified MonteCarlo
+import qualified System.Random
 
 -- Call Option:
 strike   = 85.0
@@ -46,12 +48,29 @@ t = Common.mkTimeY 2022.1
 volTF = Common.mkConstTF 0.25
 diff  = Diffusions.mkGBM (Common.mkConstTF 0.0) volTF
 
--- Numerical Environment:
-numEnv = OptPricer.BSMNumEnv { OptPricer.m_nStdDevs = nStdDevs }
+-- BSM Numerical Environment:
+bsNumEnv = OptPricer.BSMNumEnv { OptPricer.m_nStdDevs = nStdDevs }
 
--- Price the option using the Lambda PayOff:
-pxAny = OptPricer.bsmPricer diff rTF divsTF numEnv optSpecAny s t
+-- BSM Price the option using the Lambda PayOff:
+pxAny = OptPricer.bsmPricer diff rTF divsTF bsNumEnv optSpecAny s t
 
--- Price the option  using the symbolic PayOff:
-pxSym = OptPricer.bsmPricer diff rTF divsTF numEnv optSpecSym s t
+-- BSM Price the option  using the symbolic PayOff:
+pxSym = OptPricer.bsmPricer diff rTF divsTF bsNumEnv optSpecSym s t
+
+-- Monte-Carlo Numerical Environment and the Initial State:
+mcNumEnv =
+  MonteCarlo.MCNumEnv1D
+  {
+    MonteCarlo.m_nPaths    = 10000,
+    MonteCarlo.m_timeStepY = 0.001,
+    MonteCarlo.m_rngSeed   = 12345
+  }
+state0 = MonteCarlo.initMCPathGenState1D optSpecSym mcNumEnv s t
+state1 =
+  MonteCarlo.mcStep1D
+    diff
+    (Just (rTF, divsTF))
+    optSpecSym
+    (MonteCarlo.m_timeStepY mcNumEnv)
+    state0
 

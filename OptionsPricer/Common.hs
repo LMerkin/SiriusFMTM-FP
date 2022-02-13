@@ -1,8 +1,9 @@
 module Common
 (
   assert,
-  Time, mkTimeY, TFunc,    mkConstTF, mkStepsTF, mkLinSegmsTF, getConstTF,
-  mapTFunc,  evalTFunc,    integrateTFunc,       Px(..)
+  Time,     mkTimeY,   getTimeY,
+  TFunc,    mkConstTF, mkStepsTF,      mkLinSegmsTF, getConstTF,
+  mapTFunc, evalTFunc, integrateTFunc, Px(..)
 )
 where
 ------------------------------------------------------------------------------
@@ -28,8 +29,7 @@ mkTimeY yf
 getTimeY :: Time -> Double
 getTimeY   (Time t) = t
 
-newtype DeltaT = DeltaT Double deriving(Show, Eq, Ord);
-
+-- newtype DeltaT = DeltaT Double deriving(Show, Eq, Ord);
 -- TODO: +- of Time and DeltaT
 
 ------------------------------------------------------------------------------
