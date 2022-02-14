@@ -1,4 +1,4 @@
-module Tests
+module Main
 where
 
 import qualified Common
@@ -52,25 +52,25 @@ diff  = Diffusions.mkGBM (Common.mkConstTF 0.0) volTF
 bsNumEnv = OptPricer.BSMNumEnv { OptPricer.m_nStdDevs = nStdDevs }
 
 -- BSM Price the option using the Lambda PayOff:
-pxAny = OptPricer.bsmPricer diff rTF divsTF bsNumEnv optSpecAny s t
+pxBSAny = OptPricer.bsmPricer diff rTF divsTF bsNumEnv optSpecAny s t
 
 -- BSM Price the option  using the symbolic PayOff:
-pxSym = OptPricer.bsmPricer diff rTF divsTF bsNumEnv optSpecSym s t
+pxBSSym = OptPricer.bsmPricer diff rTF divsTF bsNumEnv optSpecSym s t
 
 -- Monte-Carlo Numerical Environment and the Initial State:
 mcNumEnv =
   MonteCarlo.MCNumEnv1D
   {
-    MonteCarlo.m_nPaths    = 10000,
+    MonteCarlo.m_nPaths    = 1000000,
     MonteCarlo.m_timeStepY = 0.001,
     MonteCarlo.m_rngSeed   = 12345
   }
-state0 = MonteCarlo.initMCPathGenState1D optSpecSym mcNumEnv s t
-state1 =
-  MonteCarlo.mcStep1D
-    diff
-    (Just (rTF, divsTF))
-    optSpecSym
-    (MonteCarlo.m_timeStepY mcNumEnv)
-    state0
+pxMCSym = MonteCarlo.mcPricer1D diff rTF divsTF mcNumEnv optSpecSym s t
+
+main :: IO ()
+main =
+  do
+    putStrLn ("BSM Sym: " ++ (show pxBSSym))
+    putStrLn ("BSM Lbd: " ++ (show pxBSAny))
+    putStrLn ("MC  Sym: " ++ (show pxMCSym))
 
