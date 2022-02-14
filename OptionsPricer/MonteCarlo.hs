@@ -12,7 +12,7 @@ import qualified Contracts
 import qualified OptPricer
 import qualified System.Random
 import qualified Data.Word
-import           Control.Parallel
+import qualified Control.Parallel.Strategies
 
 -------------------------------------------------------------------------------
 -- "MCPricer1D": Monte-Carlo Pricer Type for 1D Diffusions:                  --
@@ -101,24 +101,44 @@ mcOptPx1D diff irModel divsModel numEnv optSpec s t = Common.Px discExpPayOff
       then  nQuadrs `div` nBlocks
       else (nQuadrs `div` nBlocks) + 1
 
-  -- List of all Block IDs:
+  -- The list of per-block sums of PayOffs. NB: Due to lazy evaluation in Has-
+  -- kell, it should not be evaluated yet --  we will evaluate its components
+  -- in prallel:
   blockIDs :: [Int]
-  blockIDs =  [0 .. (nBlocks-1)]
-
-  -- PayOff Sums for all blocks:
+  blockIDs =  [0.. (nBlocks-1)]
   bSums    :: [Double]
   bSums    =
     map (\bID -> mcEvalBlock diff mbFwdCurves optSpec numEnv bID blockSz s t)
         blockIDs
 
-  -- Evaluate "bSums", conceptually in parallel:
-  parList  :: [Double] -> Double -> Double
-  parList     []          b      =  b
-  parList     (x:xs)      b      =  x `par` (parList xs b)
+  -- Make a "schedule" for conceptually-parallel evaluation of all "bSums",
+  -- with (just to make sure) waiting for the evaluation results at the end:
+  bSched  :: Control.Parallel.Strategies.Eval [Double]
+  bSched  =  mkSched bSums
+
+  mkSched :: [Double]  -> Control.Parallel.Strategies.Eval[Double]
+  mkSched    []         = return []
+  mkSched    (sum:sums) =
+    do
+      -- Schedule parallel evaluation of this block:
+      parRes <- Control.Parallel.Strategies.rpar sum
+      -- Schedule waiting for the evaluation to be complete:
+--    seqRes <- Control.Parallel.Strategies.rseq sum
+      -- Schedules for other blocks:
+      others <- mkSched sums
+      -- Now merge the schedules: the parallel one comes in front, and waiting
+      -- comes at the end:
+--    return (parRes : (others ++ [seqRes]))
+      return (parRes : others)
+
+  -- RUN the schedule constructed. The result should be same as "bSums", but
+  -- evaluated in parallel:
+  bSums'    :: [Double]
+  bSums'    =  Control.Parallel.Strategies.runEval bSched
 
   -- The Avg (Expected) PayOff over all Blocks:
-  expPayOff  :: Double
-  expPayOff  =  (parList bSums (sum bSums)) / (4.0 * fromIntegral nQuadrs)
+  expPayOff :: Double
+  expPayOff =  (sum bSums') / (4.0 * fromIntegral nQuadrs)
 
   -- Option Expiration Time:
   tExp  :: Common.Time
