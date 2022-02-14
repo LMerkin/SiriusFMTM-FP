@@ -1,3 +1,8 @@
+-- vim:ts=2:et
+-- ========================================================================= --
+--                                   "Common.hs":                            --
+--      Common Types and Utils for the Haskell Options Pricing Framework     --
+-- ========================================================================= --
 module Common
 (
   assert,
@@ -174,9 +179,9 @@ integrateTFunc f           ta@(Time a) tb@(Time b)
         -- Generic Case: Integration interval [a,b] entirely belongs to the
         -- function domain:
         case f of
-          ConstTF    c     -> error "integrateTFunc: Impossible case"
           StepsTF    steps -> integrTF steps integrStep 0.0
           LinSegmsTF segms -> integrTF segms integrSegm 0.0
+          -- ConstTF is an impossible case, hence not matched
   where
   Time minT = minTime f
 

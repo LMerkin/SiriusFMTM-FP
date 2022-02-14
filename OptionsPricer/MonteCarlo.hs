@@ -12,6 +12,7 @@ import qualified Contracts
 import qualified OptPricer
 import qualified System.Random
 import qualified Data.Word
+import           Control.Parallel
 
 -------------------------------------------------------------------------------
 -- "MCPricer1D": Monte-Carlo Pricer Type for 1D Diffusions:                  --
@@ -19,9 +20,10 @@ import qualified Data.Word
 data MCNumEnv1D =
   MCNumEnv1D
   {
-    m_nPaths    :: Int,     -- Number   of Monte-Carlo paths to be generated
-    m_timeStepY :: Double,  -- TimeStep in Years (e.g. 1e-3 or 1e-4)
-    m_rngSeed   :: Int      -- To initialise the Random Number Generator
+    m_nPaths     :: Int,    -- Number   of Monte-Carlo paths to be generated
+    m_timeStepY  :: Double, -- TimeStep in Years (e.g. 1e-3 or 1e-4)
+    m_rngSeed    :: Int,    -- To initialise the Random Number Generator
+    m_nParBlocks :: Int     -- Number of conceptually-parallel blocks
   }
 
 -- For "MCPricer1D": Diffusion must be "Diff1D", and IR and Divs models are to
@@ -88,22 +90,35 @@ mcOptPx1D diff irModel divsModel numEnv optSpec s t = Common.Px discExpPayOff
     then Nothing
     else Just (irModel, divsModel)
 
-  -- Run all "nQuadrs", summing up the results (each result is a sum of 4
-  -- PayOffs):
-  runQuadrs :: Int -> Double  -> Double
-  runQuadrs    qID    currSum =
-    if qID >= nQuadrs
-    then currSum
+  -- Divide "nQuadrs" into (conceptually-parallel) blocks:
+  blockSz, nBlocks :: Int
+  nBlocks = m_nParBlocks numEnv
+  blockSz =
+    if   nBlocks <= 0
+    then error "mcOptPx1D: nParBlocks must be >= 1"
     else
-      let
-        sum4 :: Double
-        sum4 =  mcEvalPaths4 diff mbFwdCurves optSpec numEnv qID s t
-      in
-        runQuadrs (qID + 1) (currSum + sum4)
+      if    nQuadrs `mod` nBlocks == 0
+      then  nQuadrs `div` nBlocks
+      else (nQuadrs `div` nBlocks) + 1
 
-  -- The Avg (Expected) PayOff over all Quadrupes:
+  -- List of all Block IDs:
+  blockIDs :: [Int]
+  blockIDs =  [0 .. (nBlocks-1)]
+
+  -- PayOff Sums for all blocks:
+  bSums    :: [Double]
+  bSums    =
+    map (\bID -> mcEvalBlock diff mbFwdCurves optSpec numEnv bID blockSz s t)
+        blockIDs
+
+  -- Evaluate "bSums", conceptually in parallel:
+  parList  :: [Double] -> Double -> Double
+  parList     []          b      =  b
+  parList     (x:xs)      b      =  x `par` (parList xs b)
+
+  -- The Avg (Expected) PayOff over all Blocks:
   expPayOff  :: Double
-  expPayOff  =  (runQuadrs 0 0.0) / (4.0 * fromIntegral nQuadrs)
+  expPayOff  =  (parList bSums (sum bSums)) / (4.0 * fromIntegral nQuadrs)
 
   -- Option Expiration Time:
   tExp  :: Common.Time
@@ -167,11 +182,12 @@ data MCPathGenState1D =
 -- at the ExpirationTime:
 --
 initMCPathGenState1D ::
---          OptSpec      ForRNG        quadrId St           t
-  Contracts.OptionSpec ->MCNumEnv1D -> Int ->  Common.Px -> Common.Time ->
-  (MCPathGenState1D, Bool)
+  --        OptSpec      RNG
+  Contracts.OptionSpec ->System.Random.StdGen ->
+  --     St              t
+  Common.Px           -> Common.Time          -> (MCPathGenState1D, Bool)
 
-initMCPathGenState1D optSpec numEnv qID s t = (state, cont)
+initMCPathGenState1D optSpec rngState s t     =  (state, cont)
   where
   -- NB: Prev conds are onviously "False" in all cases:
   (knockLo, outLo) = ckKnock optSpec False s False
@@ -188,7 +204,7 @@ initMCPathGenState1D optSpec numEnv qID s t = (state, cont)
   state    =
     MCPathGenState1D
     {
-      m_rngState = System.Random.mkStdGen (m_rngSeed numEnv + qID),
+      m_rngState = rngState,
       m_St0      = s,
       m_St1      = s,
       m_St2      = s,
@@ -403,16 +419,17 @@ mcStep1D diff mbFwdCurves optSpec dt state =    (state',  cont')
 --
 mcEvalPaths4 :: Diffusions.Diff1D                                    ->
                 Maybe (OptPricer.FwdIRModel, OptPricer.FwdDivsModel) ->
-                Contracts.OptionSpec -> MCNumEnv1D  -> Int           ->
-                Common.Px            -> Common.Time -> Double
+                Contracts.OptionSpec -> MCNumEnv1D  ->
+                System.Random.StdGen -> Common.Px   -> Common.Time   ->
+                (Double, System.Random.StdGen)
 
-mcEvalPaths4 diff mbFwdCurves optSpec numEnv qID s t = sum4
+mcEvalPaths4 diff mbFwdCurves optSpec numEnv rngState  s t  = (sum4, rngState')
   where
   -- "state_t" is the initial state (at "t"), and continuation flag (if False,
   -- we do not even start the Paths):
   state_t :: MCPathGenState1D
   cont_t  :: Bool
-  (state_t, cont_t) = initMCPathGenState1D optSpec numEnv qID s t
+  (state_t, cont_t) = initMCPathGenState1D optSpec rngState s t
 
   -- "state_T" is the final state at Option Expiration Time:
   state_T :: MCPathGenState1D
@@ -427,7 +444,8 @@ mcEvalPaths4 diff mbFwdCurves optSpec numEnv qID s t = sum4
   dt      :: Double
   dt      = m_timeStepY  numEnv
 
-  -- Run a tail recursion until the "cont" flag is reset:
+  -- Run a tail recursion until the "cont" flag  is reset:
+  -- NB: The "rngState" is threaded through "state"s here:
   mcEvalPaths4' :: MCPathGenState1D -> MCPathGenState1D
   mcEvalPaths4'  state =
     let (state', cont) = mcStep1D diff mbFwdCurves optSpec dt state
@@ -451,8 +469,44 @@ mcEvalPaths4 diff mbFwdCurves optSpec numEnv qID s t = sum4
   Common.Px po3 =
     evalPayOff optSpec t (m_St3      state_T) (m_IS3      state_T) tFin
                          (m_knockLo3 state_T) (m_knockUp3 state_T)
-
   sum4 = po0 + po1 + po2 + po3
+
+  -- Also the final RNG State must be extracted from "state_T":
+  rngState' :: System.Random.StdGen
+  rngState' =  m_rngState   state_T
+
+-------------------------------------------------------------------------------
+-- "mcEvalBlock":                                                            --
+-------------------------------------------------------------------------------
+-- Evaluate a Block of Quadrupes of Monte-Carlo Paths, returns the sum of all
+-- PayOffs evaluated over each individual Path:
+--
+mcEvalBlock :: Diffusions.Diff1D                                    ->
+               Maybe (OptPricer.FwdIRModel, OptPricer.FwdDivsModel) ->
+               Contracts.OptionSpec -> MCNumEnv1D  -> Int   -> Int  ->
+               Common.Px            -> Common.Time -> Double
+
+mcEvalBlock diff mbFwdCurves optSpec numEnv blockID blockSz s t  =
+  runQuadrs 0 rngState0 0.0
+  where
+  -- Here we initialise the RNG State, but it must use different seeds for all
+  -- blocks, otherwise we would get identical results across all blocks:
+  rngState0 :: System.Random.StdGen
+  rngState0 =  System.Random.mkStdGen (m_rngSeed numEnv + blockID)
+
+  runQuadrs :: Int -> System.Random.StdGen -> Double -> Double
+  runQuadrs    qID    rngState     currSum  =
+    if qID >= blockSz
+    then currSum
+    else
+      let
+        (sum4, rngState') =
+          mcEvalPaths4 diff mbFwdCurves optSpec numEnv rngState s t
+      in
+        runQuadrs (qID + 1) rngState' (sum4 + currSum)
+
+  -- NB: RNG State is threaded through the block, becomes disused at the block
+  -- end...
 
 -------------------------------------------------------------------------------
 -- "ckKnock": Verifies the KnockIn / KnockOut Conds at Option Barriers:      --

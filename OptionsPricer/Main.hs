@@ -1,3 +1,7 @@
+-- vim:ts=2:et
+-- ========================================================================= --
+--                                   "Main.hs":                              --
+-- ========================================================================= --
 module Main
 where
 
@@ -61,9 +65,10 @@ pxBSSym = OptPricer.bsmPricer diff rTF divsTF bsNumEnv optSpecSym s t
 mcNumEnv =
   MonteCarlo.MCNumEnv1D
   {
-    MonteCarlo.m_nPaths    = 1000000,
-    MonteCarlo.m_timeStepY = 0.001,
-    MonteCarlo.m_rngSeed   = 12345
+    MonteCarlo.m_nPaths     = 100000,
+    MonteCarlo.m_timeStepY  = 0.001,
+    MonteCarlo.m_rngSeed    = 12345,
+    MonteCarlo.m_nParBlocks = 24
   }
 pxMCSym = MonteCarlo.mcPricer1D diff rTF divsTF mcNumEnv optSpecSym s t
 

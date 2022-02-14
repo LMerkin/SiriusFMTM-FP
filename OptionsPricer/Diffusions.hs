@@ -1,3 +1,8 @@
+-- vim:ts=2:et
+-- ========================================================================= --
+--                                "Diffusions.hs":                           --
+--                         Stochastic Models ("Diffusions")                  --
+-- ========================================================================= --
 module Diffusions
 (
   VolType1D(..), Diff1D, getVolType1D, getMu1D, getSigma1D, isNonNeg,
