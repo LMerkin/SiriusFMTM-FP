@@ -18,9 +18,10 @@ expT     = Common.mkTimeY 2023.1
 -- For numerical integration:
 nStdDevs = 6
 
--- With PayOff as a lambda:
+-- With PayOff as a Const.Expr:
 payOffAny  =
-  Contracts.AnyPOF (\(Common.Px s) -> Common.Px (max (s-strike) 0))
+  Contracts.AnyPOF
+  (Common.Max (Common.Sub Common.X (Common.Const strike)) (Common.Const 0))
 
 -- With same symbolic PayOff:
 payOffSym  = Contracts.Call (Common.Px strike)
@@ -61,21 +62,16 @@ pxBSAny = OptPricer.bsmPricer diff rTF divsTF bsNumEnv optSpecAny s t
 -- BSM Price the option  using the symbolic PayOff:
 pxBSSym = OptPricer.bsmPricer diff rTF divsTF bsNumEnv optSpecSym s t
 
--- Monte-Carlo Numerical Environment and the Initial State:
-mcNumEnv =
-  MonteCarlo.MCNumEnv1D
-  {
-    MonteCarlo.m_nPaths     = 100000,
-    MonteCarlo.m_timeStepY  = 0.001,
-    MonteCarlo.m_rngSeed    = 12345,
-    MonteCarlo.m_nParBlocks = 24
-  }
-pxMCSym = MonteCarlo.mcPricer1D diff rTF divsTF mcNumEnv optSpecSym s t
+runMC :: String -> Common.Px
+runMC    mcNumEnvStr =
+  MonteCarlo.mcPricer1D diff rTF divsTF (read mcNumEnvStr) optSpecSym s t
 
 main :: IO ()
 main =
   do
+    mcNumEnvStr <- getLine
+    putStrLn (mcNumEnvStr)
     putStrLn ("BSM Sym: " ++ (show pxBSSym))
     putStrLn ("BSM Lbd: " ++ (show pxBSAny))
-    putStrLn ("MC  Sym: " ++ (show pxMCSym))
+    putStrLn ("MC  Sym: " ++ (show (runMC mcNumEnvStr)))
 

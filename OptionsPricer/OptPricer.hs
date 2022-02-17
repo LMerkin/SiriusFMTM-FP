@@ -253,7 +253,7 @@ bsmOptPx (Contracts.AnyPOF phi) onFut expT volTF rTF divsTF numEnv
   -- Function to be integrated:
   integrand :: Double -> Double
   integrand x =
-    let Common.Px payOff = phi (Common.Px (exp x))
+    let payOff = (Common.mkFunc phi) (exp x)
     in  payOff * exp (- (m - x)**2 / (4.0 * tau))
 
   -- Integrate using the Gauss-Legendre method:

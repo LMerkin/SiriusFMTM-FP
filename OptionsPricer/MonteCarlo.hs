@@ -4,6 +4,9 @@
 --                  Options Pricer using Monte-Carlo Methods                 --
 -- ========================================================================= --
 module MonteCarlo
+(
+  RNGImpl(..), ParEvalImpl(..), MCNumEnv1D(..), MCPricer1D, mcPricer1D
+)
 where
 
 import qualified Common
@@ -11,20 +14,32 @@ import qualified Diffusions
 import qualified Contracts
 import qualified OptPricer
 import qualified System.Random
+import qualified System.Random.Mersenne.Pure64
 import qualified Data.Word
 import qualified Control.Parallel.Strategies
+import qualified Control.Monad.Par
 
 -------------------------------------------------------------------------------
 -- "MCPricer1D": Monte-Carlo Pricer Type for 1D Diffusions:                  --
 -------------------------------------------------------------------------------
-data MCNumEnv1D =
+-- Configuration Options:
+-- RNG to be used:
+data RNGImpl     = SysRandom | Mersenne64 deriving (Read, Show)
+
+-- Parallelism implementation:
+data ParEvalImpl = Eval      | Par        deriving (Read, Show)
+
+data MCNumEnv1D  =
   MCNumEnv1D
   {
-    m_nPaths     :: Int,    -- Number   of Monte-Carlo paths to be generated
-    m_timeStepY  :: Double, -- TimeStep in Years (e.g. 1e-3 or 1e-4)
-    m_rngSeed    :: Int,    -- To initialise the Random Number Generator
-    m_nParBlocks :: Int     -- Number of conceptually-parallel blocks
+    m_nPaths      :: Int,    -- Number   of Monte-Carlo paths to be generated
+    m_timeStepY   :: Double, -- TimeStep in Years (e.g. 1e-3 or 1e-4)
+    m_rngSeed     :: Int,    -- To initialise the Random Number Generator
+    m_rngImpl     :: RNGImpl,
+    m_nParBlocks  :: Int,    -- Number of conceptually-parallel blocks
+    m_parEvalImpl :: ParEvalImpl
   }
+  deriving (Read, Show)
 
 -- For "MCPricer1D": Diffusion must be "Diff1D", and IR and Divs models are to
 -- be FwdCurves:
@@ -64,8 +79,11 @@ mcPricer1D diff irModel divsModel numEnv optSpec s t
       _ -> error "mcPricer1D: European Exercise is required"
 
 -------------------------------------------------------------------------------
--- "mcOptPx1D": Driver for the Monte-Carlo Paths Evaluation:                 --
+-- "mcOptPx1D":                                                              --
 -------------------------------------------------------------------------------
+-- Divides MC evauations between Blocks (of Path Quadruples) and tries to evalu-
+-- ate the Blocks in parallel; uses "mcEvalBlock" to evaluate each Block:
+--
 mcOptPx1D ::
   Diffusions.Diff1D -> OptPricer.FwdIRModel -> OptPricer.FwdDivsModel   ->
   MCNumEnv1D        -> Contracts.OptionSpec -> Common.Px -> Common.Time ->
@@ -101,44 +119,64 @@ mcOptPx1D diff irModel divsModel numEnv optSpec s t = Common.Px discExpPayOff
       then  nQuadrs `div` nBlocks
       else (nQuadrs `div` nBlocks) + 1
 
-  -- The list of per-block sums of PayOffs. NB: Due to lazy evaluation in Has-
-  -- kell, it should not be evaluated yet --  we will evaluate its components
-  -- in prallel:
-  blockIDs :: [Int]
-  blockIDs =  [0.. (nBlocks-1)]
-  bSums    :: [Double]
-  bSums    =
-    map (\bID -> mcEvalBlock diff mbFwdCurves optSpec numEnv bID blockSz s t)
-        blockIDs
+  -- The actual number of Paths to be generated may be greater than "nPaths",
+  -- but never less:
+  actPaths :: Int
+  actPaths =  nBlocks * blockSz * 4
 
-  -- Make a "schedule" for conceptually-parallel evaluation of all "bSums",
-  -- with (just to make sure) waiting for the evaluation results at the end:
-  bSched  :: Control.Parallel.Strategies.Eval [Double]
-  bSched  =  mkSched bSums
+  -- Make an "Eval" "schedule" for conceptually-parallel evaluation of all
+  -- Blocks:
+  mkEvalSched :: Int -> Control.Parallel.Strategies.Eval Double
+  mkEvalSched    bID
+    | bID >= nBlocks = return 0.0
+    | otherwise      =
+      do
+        -- Schedule parallel evaluation of this block:
+        parRes <- Control.Parallel.Strategies.rpar
+                  (mcEvalBlock diff mbFwdCurves optSpec numEnv bID blockSz s t)
 
-  mkSched :: [Double]  -> Control.Parallel.Strategies.Eval[Double]
-  mkSched    []         = return []
-  mkSched    (sum:sums) =
-    do
-      -- Schedule parallel evaluation of this block:
-      parRes <- Control.Parallel.Strategies.rpar sum
-      -- Schedule waiting for the evaluation to be complete:
---    seqRes <- Control.Parallel.Strategies.rseq sum
-      -- Schedules for other blocks:
-      others <- mkSched sums
-      -- Now merge the schedules: the parallel one comes in front, and waiting
-      -- comes at the end:
---    return (parRes : (others ++ [seqRes]))
-      return (parRes : others)
+        -- Schedules for other blocks:
+        others <- mkEvalSched (bID + 1)
 
-  -- RUN the schedule constructed. The result should be same as "bSums", but
-  -- evaluated in parallel:
-  bSums'    :: [Double]
-  bSums'    =  Control.Parallel.Strategies.runEval bSched
+        -- Now merge the schedules:
+        return (parRes + others)
+
+  -- Alternatively, make parallel tasks ("Par") and syncronised objs ("IVar"s):
+  --
+  mkParTasks :: Int -> Control.Monad.Par.Par Double
+  mkParTasks    bID
+    | bID >= nBlocks = return 0.0
+    | otherwise      =
+      do
+        -- Create an "IVar" for getting the results from "fork":
+        ivar <- Control.Monad.Par.new
+
+        -- Evaluate "mcEvalBlock" in a parallel thread, putting the result
+        -- (Double) into "ivar" when ready:
+        Control.Monad.Par.fork
+          (Control.Monad.Par.put
+           ivar
+           (mcEvalBlock diff mbFwdCurves optSpec numEnv bID blockSz s t))
+
+        -- Create tasks for other bIDs:
+        sums <- mkParTasks (bID + 1)
+
+        -- Wait for THIS result to be complete:
+        sum  <- Control.Monad.Par.get ivar
+
+        -- Merge the results:
+        return (sum + sums)
+
+  -- RUN THE SCHEDULE or TASKS:
+  totSum   :: Double
+  totSum   =
+    case m_parEvalImpl numEnv of
+      Eval -> Control.Parallel.Strategies.runEval (mkEvalSched 0)
+      Par  -> Control.Monad.Par.runPar            (mkParTasks  0)
 
   -- The Avg (Expected) PayOff over all Blocks:
   expPayOff :: Double
-  expPayOff =  (sum bSums') / (4.0 * fromIntegral nQuadrs)
+  expPayOff =  totSum / (fromIntegral actPaths)
 
   -- Option Expiration Time:
   tExp  :: Common.Time
@@ -159,38 +197,41 @@ mcOptPx1D diff irModel divsModel numEnv optSpec s t = Common.Px discExpPayOff
 -------------------------------------------------------------------------------
 -- Internal State of the MC Path Generator:                                  --
 -------------------------------------------------------------------------------
+type RNGState   =
+  Either System.Random.StdGen System.Random.Mersenne.Pure64.PureMT
+
 data MCPathGenState1D =
   MCPathGenState1D
   {
-    -- Technical:
-    m_rngState :: System.Random.StdGen, -- State of the Random Number Generator
+    -- Technical: RNG State, depending on the impl used:
+    m_rngState  :: RNGState,
 
     -- Paths Generation:
     -- Curr "S(t)" vals along 4 simultaneously-generated paths, and "t":
-    m_St0      :: Common.Px,
-    m_St1      :: Common.Px,
-    m_St2      :: Common.Px,
-    m_St3      :: Common.Px,
-    m_t        :: Common.Time,    -- Curr time
+    m_St0       :: Common.Px,
+    m_St1       :: Common.Px,
+    m_St2       :: Common.Px,
+    m_St3       :: Common.Px,
+    m_t         :: Common.Time,    -- Curr time
 
     -- State of the Option Pricer -- for efficiency, we put it directly into the
     -- Path Generator State:
     -- Integrals of S(t) along the 4 paths (for Asian options):
-    m_IS0      :: Double,
-    m_IS1      :: Double,
-    m_IS2      :: Double,
-    m_IS3      :: Double,
+    m_IS0       :: Double,
+    m_IS1       :: Double,
+    m_IS2       :: Double,
+    m_IS3       :: Double,
 
     -- Knock-in OR knock-out conds for Barrier options along the 4 paths, for
     -- Lower and Upper Barriers:
-    m_knockLo0 :: Bool,
-    m_knockUp0 :: Bool,
-    m_knockLo1 :: Bool,
-    m_knockUp1 :: Bool,
-    m_knockLo2 :: Bool,
-    m_knockUp2 :: Bool,
-    m_knockLo3 :: Bool,
-    m_knockUp3 :: Bool
+    m_knockLo0  :: Bool,
+    m_knockUp0  :: Bool,
+    m_knockLo1  :: Bool,
+    m_knockUp1  :: Bool,
+    m_knockLo2  :: Bool,
+    m_knockUp2  :: Bool,
+    m_knockLo3  :: Bool,
+    m_knockUp3  :: Bool
   }
 
 -------------------------------------------------------------------------------
@@ -202,10 +243,10 @@ data MCPathGenState1D =
 -- at the ExpirationTime:
 --
 initMCPathGenState1D ::
-  --        OptSpec      RNG
-  Contracts.OptionSpec ->System.Random.StdGen ->
-  --     St              t
-  Common.Px           -> Common.Time          -> (MCPathGenState1D, Bool)
+  --        OptSpec       RNG
+  Contracts.OptionSpec -> RNGState    ->
+  --     St               t
+  Common.Px            -> Common.Time -> (MCPathGenState1D, Bool)
 
 initMCPathGenState1D optSpec rngState s t     =  (state, cont)
   where
@@ -224,24 +265,24 @@ initMCPathGenState1D optSpec rngState s t     =  (state, cont)
   state    =
     MCPathGenState1D
     {
-      m_rngState = rngState,
-      m_St0      = s,
-      m_St1      = s,
-      m_St2      = s,
-      m_St3      = s,
-      m_t        = t,
-      m_IS0      = 0,
-      m_IS1      = 0,
-      m_IS2      = 0,
-      m_IS3      = 0,
-      m_knockLo0 = knockLo,
-      m_knockUp0 = knockUp,
-      m_knockLo1 = knockLo,
-      m_knockUp1 = knockUp,
-      m_knockLo2 = knockLo,
-      m_knockUp2 = knockUp,
-      m_knockLo3 = knockLo,
-      m_knockUp3 = knockUp
+      m_rngState  = rngState,
+      m_St0       = s,
+      m_St1       = s,
+      m_St2       = s,
+      m_St3       = s,
+      m_t         = t,
+      m_IS0       = 0,
+      m_IS1       = 0,
+      m_IS2       = 0,
+      m_IS3       = 0,
+      m_knockLo0  = knockLo,
+      m_knockUp0  = knockUp,
+      m_knockLo1  = knockLo,
+      m_knockUp1  = knockUp,
+      m_knockLo2  = knockLo,
+      m_knockUp2  = knockUp,
+      m_knockLo3  = knockLo,
+      m_knockUp3  = knockUp
     }
 
 -------------------------------------------------------------------------------
@@ -258,21 +299,41 @@ mcStep1D :: Diffusions.Diff1D      ->
 mcStep1D diff mbFwdCurves optSpec dt state =    (state',  cont')
   where
   -- Generate a uniformly-distributed Word64:
-  rngPair0 :: (Data.Word.Word64, System.Random.StdGen)
-  rngPair0 =  System.Random.uniform (m_rngState state)
+  u0, u1    :: Double
+  rngState' :: RNGState
 
-  rngPair1 :: (Data.Word.Word64, System.Random.StdGen)
-  rngPair1 =  System.Random.uniform (snd rngPair0)
+  (u0, u1, rngState') =
+    case m_rngState state of
+      Left stdGen ->
+        let
+          rngPair0 :: (Data.Word.Word64, System.Random.StdGen)
+          rngPair0 =  System.Random.uniform stdGen
 
-  -- Convert random Word64s into uniformly-distributed Doubles in [0..1]:
-  d0, d1, max64, u0, u1 :: Double
-  d0    =  fromIntegral (fst rngPair0)
-  d1    =  fromIntegral (fst rngPair1)
-  max64 =  fromIntegral (maxBound :: Data.Word.Word64)
-  u0    =  d0 / max64
-  u1    =  d1 / max64
+          rngPair1 :: (Data.Word.Word64, System.Random.StdGen)
+          rngPair1 =  System.Random.uniform (snd rngPair0)
 
-  -- Using the Box-Muller method, produce 2 N(0,1) pseudo-random numbers:
+          -- Convert random Word64s into uniformly-distributed Doubles in
+          -- [0..1]:
+          d0, d1, max64 :: Double
+          d0    =  fromIntegral (fst rngPair0)
+          d1    =  fromIntegral (fst rngPair1)
+          max64 =  fromIntegral (maxBound :: Data.Word.Word64)
+        in
+          (d0 / max64, d1 / max64, Left (snd rngPair1))
+          -- u0        u1          rngState'
+
+      Right pureMT ->
+        let
+          rngPair0 :: (Double, System.Random.Mersenne.Pure64.PureMT)
+          rngPair0 =  System.Random.Mersenne.Pure64.randomDouble pureMT
+
+          rngPair1 :: (Double, System.Random.Mersenne.Pure64.PureMT)
+          rngPair1 =  System.Random.Mersenne.Pure64.randomDouble (snd rngPair0)
+        in
+          (fst rngPair0, fst rngPair1, Right (snd rngPair1))
+
+  -- Using the Box-Muller method, produce 2 N(0,1) pseudo-random numbers z0, z1
+  -- from u0, u1:
   r, theta, z0, z1 :: Double
   r     =  sqrt  (-2.0 * log u0)
   theta =  2.0 * pi * u1
@@ -411,7 +472,7 @@ mcStep1D diff mbFwdCurves optSpec dt state =    (state',  cont')
   state' =
     state
     {
-      m_rngState = snd rngPair1,
+      m_rngState = rngState',
       m_St0      = px0',
       m_St1      = px1',
       m_St2      = px2',
@@ -434,14 +495,14 @@ mcStep1D diff mbFwdCurves optSpec dt state =    (state',  cont')
 -------------------------------------------------------------------------------
 -- "mcEvalPaths4":                                                           --
 -------------------------------------------------------------------------------
--- Evaluate 4 Monte-Carlo Paths in one go:
--- Returns the sum of 4 PayOffs evaluated over those Paths:
+-- Traverses the time range from "t" to "T" using "mcStep1D" evaluating 4 Paths
+-- in one go; returns the sum of 4 PayOffs evaluated over those Paths:
 --
 mcEvalPaths4 :: Diffusions.Diff1D                                    ->
                 Maybe (OptPricer.FwdIRModel, OptPricer.FwdDivsModel) ->
                 Contracts.OptionSpec -> MCNumEnv1D  ->
-                System.Random.StdGen -> Common.Px   -> Common.Time   ->
-                (Double, System.Random.StdGen)
+                RNGState             -> Common.Px   -> Common.Time   ->
+                (Double, RNGState)
 
 mcEvalPaths4 diff mbFwdCurves optSpec numEnv rngState  s t  = (sum4, rngState')
   where
@@ -470,7 +531,7 @@ mcEvalPaths4 diff mbFwdCurves optSpec numEnv rngState  s t  = (sum4, rngState')
   mcEvalPaths4'  state =
     let (state', cont) = mcStep1D diff mbFwdCurves optSpec dt state
     in
-      if cont
+      if   cont
       then mcEvalPaths4' state'
       else state'
 
@@ -492,14 +553,14 @@ mcEvalPaths4 diff mbFwdCurves optSpec numEnv rngState  s t  = (sum4, rngState')
   sum4 = po0 + po1 + po2 + po3
 
   -- Also the final RNG State must be extracted from "state_T":
-  rngState' :: System.Random.StdGen
-  rngState' =  m_rngState   state_T
+  rngState' :: RNGState
+  rngState' =  m_rngState state_T
 
 -------------------------------------------------------------------------------
 -- "mcEvalBlock":                                                            --
 -------------------------------------------------------------------------------
--- Evaluate a Block of Quadrupes of Monte-Carlo Paths, returns the sum of all
--- PayOffs evaluated over each individual Path:
+-- Evaluate a Block of Quadrupes of Monte-Carlo Paths using "mcEvalPaths4";
+-- returns the sum of all PayOffs for the Block:
 --
 mcEvalBlock :: Diffusions.Diff1D                                    ->
                Maybe (OptPricer.FwdIRModel, OptPricer.FwdDivsModel) ->
@@ -511,11 +572,18 @@ mcEvalBlock diff mbFwdCurves optSpec numEnv blockID blockSz s t  =
   where
   -- Here we initialise the RNG State, but it must use different seeds for all
   -- blocks, otherwise we would get identical results across all blocks:
-  rngState0 :: System.Random.StdGen
-  rngState0 =  System.Random.mkStdGen (m_rngSeed numEnv + blockID)
+  rngState0 :: RNGState
+  rngState0 =
+    -- Use the initial PathNo in this block, adjusted by (m_rngSeed numEnv), as
+    -- the block's RNG seed:
+    let  seed = m_rngSeed numEnv + blockID * blockSz * 4
+    in
+      case m_rngImpl numEnv of
+        SysRandom  -> Left  (System.Random.mkStdGen                seed)
+        Mersenne64 -> Right (System.Random.Mersenne.Pure64.pureMT (toEnum seed))
 
-  runQuadrs :: Int -> System.Random.StdGen -> Double -> Double
-  runQuadrs    qID    rngState     currSum  =
+  runQuadrs :: Int -> RNGState -> Double   -> Double
+  runQuadrs    qID    rngState    currSum  =
     if qID >= blockSz
     then currSum
     else

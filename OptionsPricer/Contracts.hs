@@ -12,11 +12,12 @@ import qualified Common
 -- Financial Contracts:                                                      --
 -------------------------------------------------------------------------------
 data Contract =
-    Spot    String                        -- InstrName
+    Spot    String                    -- InstrName
   | Futures String  Common.Time       -- InstrName, ExpirTime
   | Option  String  OptionSpec
   -- TODO:  Swap???
   -- Cannot derive Show or Eq: OptionSpec.PayOffFunc may contain a lambda!
+  deriving (Read, Show)
 
 -------------------------------------------------------------------------------
 -- "PayOffFunc" for Options:                                                 --
@@ -24,9 +25,9 @@ data Contract =
 data PayOffFunc =
     Call    Common.Px    -- Strike
   | Put     Common.Px    -- Strike
-  | LinearC [ (Double, PayOffFunc) ]
-  | AnyPOF  (Common.Px -> Common.Px)
-  -- Cannot derive Show or Eq, due to a lambda in "AnyPOF"
+  | LinearC [ (Double,   PayOffFunc) ]
+  | AnyPOF  (Common.Expr Double    )
+  deriving (Read, Show)
 
 --
 -- "evalPayOffFunc":
@@ -39,13 +40,14 @@ evalPayOffFunc (Call (Common.Px k)) (Common.Px s) =
 evalPayOffFunc (Put  (Common.Px k)) (Common.Px s) =
   Common.Px (max (k - s) 0.0)
 
-evalPayOffFunc (LinearC            lcs) px                =
+evalPayOffFunc (LinearC            lcs) px        =
   Common.Px
     ( foldl (\currSum (coeff, poFunc) ->
           let Common.Px po = evalPayOffFunc poFunc px
           in  currSum  + coeff * po)    0.0 lcs )
 
-evalPayOffFunc (AnyPOF f)               px               = f px
+evalPayOffFunc (AnyPOF f)            (Common.Px s) =
+  Common.Px ((Common.mkFunc f) s)
 
 -------------------------------------------------------------------------------
 -- "PayOffArgType":                                                          --
@@ -58,7 +60,7 @@ data PayOffArgType =
     FinalEuropean     -- PayOff is a function of the last S_T
   | IntegralAvg       -- PayOff is a function of (1/T int_0^T S_t dt): Asian
   -- TODO: Add other Exotic PayOffTypes 
-  deriving(Show, Eq)
+  deriving (Read, Show, Eq)
 
 -------------------------------------------------------------------------------
 -- "ExerciseTimes" for Options:                                              --
@@ -68,7 +70,7 @@ data ExerciseTimes  =
   | American  Common.Time     -- Can be exercised at any time <= ExpirTime
   | Bermudan [Common.Time]    -- Can be exercised at some pre-defined times
     -- TODO: ensure that Bermudan exercise times are strictly increasing
-  deriving(Show,Eq)
+  deriving (Read, Show, Eq)
 
 -------------------------------------------------------------------------------
 -- Barrier Types for Options:                                                --
@@ -77,7 +79,7 @@ data Barrier =
     NoBarr
   | KnockIn  Common.Px
   | KnockOut Common.Px
-  deriving(Show, Eq)
+  deriving (Read, Show, Eq)
 
 -------------------------------------------------------------------------------
 -- The Over-All "OptionSpec":                                                --
@@ -93,7 +95,7 @@ data OptionSpec =
     m_loBarrier     :: Barrier,
     m_upBarrier     :: Barrier
   }
-  -- Cannot derive Show or Eq: PayOffFunc may contain a lambda!
+  deriving (Read, Show)
  
 -------------------------------------------------------------------------------
 -- "isOnFutures": Whether the Option is on Futures:                          --

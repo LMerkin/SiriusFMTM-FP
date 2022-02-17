@@ -8,7 +8,7 @@ module Common
   assert,
   Time,     mkTimeY,   getTimeY,
   TFunc,    mkConstTF, mkStepsTF,      mkLinSegmsTF, getConstTF,
-  mapTFunc, evalTFunc, integrateTFunc, Px(..)
+  mapTFunc, evalTFunc, integrateTFunc, Px(..),       Expr(..),   mkFunc
 )
 where
 ------------------------------------------------------------------------------
@@ -21,7 +21,7 @@ assert    False   _ =  error "Assert Failure"
 ------------------------------------------------------------------------------
 -- "Time" as a Fractional Year in UTC:                                      --
 ------------------------------------------------------------------------------
-newtype Time   = Time Double deriving(Show, Eq, Ord);  -- E.g. 2022.12345
+newtype Time   = Time Double deriving(Read, Show, Eq, Ord);  -- E.g. 2022.12345
 
 mkTimeY :: Double -> Time
 mkTimeY yf
@@ -228,5 +228,43 @@ integrateTFunc f           ta@(Time a) tb@(Time b)
 ------------------------------------------------------------------------------
 -- NB: We allow negative Px vals as well:
 --
-newtype Px = Px Double deriving(Show, Eq, Ord)
+newtype Px = Px Double deriving (Read, Show, Eq, Ord)
+
+-------------------------------------------------------------------------------
+-- Symbolic Exprs:                                                           --
+-------------------------------------------------------------------------------
+data Expr a =
+    X
+  | Const a
+  | Add  (Expr a) (Expr a)
+  | Sub  (Expr a) (Expr a)
+  | Mult (Expr a) (Expr a)
+  | Div  (Expr a) (Expr a)
+  | Pow  (Expr a) a
+  | Exp  (Expr a)
+  | Log  (Expr a)
+  | Sin  (Expr a)
+  | Cos  (Expr a)
+  | Min  (Expr a) (Expr a)
+  | Max  (Expr a) (Expr a)
+  deriving(Read, Show)
+
+------------------------------------------------------------------------------
+-- "mkFunc": Generating an executable lambda from an Expr:                  --
+------------------------------------------------------------------------------
+mkFunc :: (Ord a, Floating a) => Expr a -> (a -> a)
+mkFunc X             = \x -> x
+mkFunc (Const c)     = \_ -> c
+mkFunc (Add   e1 e2) = \x -> (mkFunc e1) x + (mkFunc e2) x
+mkFunc (Sub   e1 e2) = \x -> (mkFunc e1) x - (mkFunc e2) x
+mkFunc (Mult  e1 e2) = \x -> (mkFunc e1) x * (mkFunc e2) x
+mkFunc (Div   e1 e2) = \x -> (mkFunc e2) x / (mkFunc e2) x
+mkFunc (Pow   e  p)  = \x -> ((mkFunc e) x)  ** p
+mkFunc (Exp   e)     = \x -> exp ((mkFunc e)  x)
+mkFunc (Log   e)     = \x -> log ((mkFunc e)  x)
+mkFunc (Sin   e)     = \x -> sin ((mkFunc e)  x)
+mkFunc (Cos   e)     = \x -> cos ((mkFunc e)  x)
+mkFunc (Min   e1 e2) = \x -> min ((mkFunc e1) x) ((mkFunc e2) x)
+mkFunc (Max   e1 e2) = \x -> max ((mkFunc e1) x) ((mkFunc e2) x)
+
 
