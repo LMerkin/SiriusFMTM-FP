@@ -1,0 +1,1 @@
+OptionSpec {m_underlying = Spot "USD/RUB", m_created = Time 2022.1, m_payOffFunc = Call (Px 85.0), m_payOffArgType = FinalEuropean, m_exerciseTimes = European (Time 2023.1), m_loBarrier = NoBarr, m_upBarrier = NoBarr}
