@@ -23,24 +23,32 @@ data Contract =
 -- "PayOffFunc" for Options:                                                 --
 -------------------------------------------------------------------------------
 data PayOffFunc =
-    Call    Common.Px    -- Strike
-  | Put     Common.Px    -- Strike
+    Call    Common.Px                -- Strike
+  | Put     Common.Px                -- Strike
+  | BinCall Common.Px    Common.Px   -- Strike, Notional
+  | BinPut  Common.Px    Common.Px   -- Strike, Notional
   | LinearC [ (Double,   PayOffFunc) ]
-  | AnyPOF  (Common.Expr Double    )
+  | AnyPOF  (Common.Expr Double    ) -- Actually, this is Px, not raw Double!
   deriving (Read, Show)
 
---
--- "evalPayOffFunc":
---
+-------------------------------------------------------------------------------
+-- "evalPayOffFunc":                                                         --
+-------------------------------------------------------------------------------
 evalPayOffFunc :: PayOffFunc -> Common.Px -> Common.Px
 
-evalPayOffFunc (Call (Common.Px k)) (Common.Px s) =
+evalPayOffFunc (Call    (Common.Px k))   (Common.Px s) =
   Common.Px (max (s - k) 0.0)
 
-evalPayOffFunc (Put  (Common.Px k)) (Common.Px s) =
+evalPayOffFunc (Put     (Common.Px k))   (Common.Px s) =
   Common.Px (max (k - s) 0.0)
 
-evalPayOffFunc (LinearC            lcs) px        =
+evalPayOffFunc (BinCall (Common.Px k) n) (Common.Px s) =
+  if s >= k then n else  Common.Px 0
+
+evalPayOffFunc (BinPut  (Common.Px k) n) (Common.Px s) =
+  if s <= k then n else  Common.Px 0
+
+evalPayOffFunc (LinearC lcs)  px      =
   Common.Px
     ( foldl (\currSum (coeff, poFunc) ->
           let Common.Px po = evalPayOffFunc poFunc px

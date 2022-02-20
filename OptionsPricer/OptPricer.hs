@@ -27,7 +27,7 @@ type Pricer diff irModel divsModel numEnv =
   Contracts.OptionSpec ->     -- Strike and ExpirTime are here
   Common.Px            ->     -- Curr Underlying Px
   Common.Time          ->     -- Curr Time
-  Common.Px                   -- OptionPx
+  Maybe Common.Px             -- OptionPx (if can be computed)
 
 -------------------------------------------------------------------------------
 -- Ineterest Rates and Dividend Rates Models as Fwd Curves:                  --
@@ -55,25 +55,39 @@ type BSMPricer   = Pricer Diffusions.Diff1D FwdIRModel FwdDivsModel BSMNumEnv
 -------------------------------------------------------------------------------
 bsmPricer ::  BSMPricer
 bsmPricer     diff irModel divsModel numEnv optSpec s t
+    -- Barriers are not supported:
   | Contracts.m_loBarrier     optSpec /= Contracts.NoBarr ||
-    Contracts.m_upBarrier     optSpec /= Contracts.NoBarr   =
-      error  "bsmPricer: Barriers are not supported"
-  | Contracts.m_payOffArgType optSpec /= Contracts.FinalEuropean =
-      error  "bsmPricer: European PayOffArgType is required"
-  | onFut && (not zeroDivs)                    =
+    Contracts.m_upBarrier     optSpec /= Contracts.NoBarr        = Nothing
+
+    -- European PayOffArgType is required:
+  | Contracts.m_payOffArgType optSpec /= Contracts.FinalEuropean = Nothing
+
+  | onFut && (not zeroDivs)   =
       error  "bsmPricer: Dividents must be Const0 on Futures"
   | t < Contracts.m_created optSpec =
       error ("bsmPricer: created" ++ (show (Contracts.m_created optSpec)) ++
              " is below curr"     ++ (show t))
-  | t >  expTime =
-      -- This is unsupported yet:
-      error ("bsmPricer: curr" ++ (show t) ++ " is beyond exp" ++
-            (show expTime))
-  | t == expTime =
-      -- Just evaluate the PayOff at the curr "s":
-      Contracts.evalPayOffFunc payOffFunc s
   | otherwise                                  =
-      bsmOptPx payOffFunc onFut expTime vol irModel divsModel numEnv s t
+      case Contracts.m_exerciseTimes optSpec of
+        Contracts.European expTime ->
+          if t == expTime
+          then
+            -- Just evaluate the PayOff at the curr  "s":
+            Just (Contracts.evalPayOffFunc payOffFunc s)
+          else
+          if t >  expTime
+          then
+            error ("bsmPricer: curr" ++ (show t) ++ " is beyond exp" ++
+                  (show expTime))
+          else
+            -- The vol model must be GBM:
+            case (Diffusions.getVolType1D diff) of
+              Diffusions.GBM vol ->
+                -- Yes, run the actual BSM pricer:
+                Just (bsmOptPx payOffFunc onFut expTime vol irModel divsModel
+                      numEnv s t)
+              _ -> Nothing
+        _ -> Nothing
 
   where
   -- Underlying Type: Futures or Spot? (XXX: Options on Options are not yet
@@ -82,20 +96,6 @@ bsmPricer     diff irModel divsModel numEnv optSpec s t
   onFut    =  Contracts.isOnFutures optSpec
   zeroDivs :: Bool
   zeroDivs = (Common.getConstTF divsModel) == 0.0
-
-  -- Exercise Time must be European, same as Expiration Time:
-  expTime :: Common.Time
-  expTime =
-    case Contracts.m_exerciseTimes optSpec of
-      Contracts.European t -> t
-      _ -> error "bsmPricer: European Exercise is required"
-
-  -- GBM vol:
-  vol :: Common.TFunc
-  vol =
-    case (Diffusions.getVolType1D diff) of
-      Diffusions.GBM vol' -> vol'
-      _ -> error "bsmPricer: GBM Model is required"
 
   -- PayOffFunc:
   payOffFunc :: Contracts.PayOffFunc

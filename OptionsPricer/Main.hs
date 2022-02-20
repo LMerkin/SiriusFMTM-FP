@@ -31,11 +31,11 @@ nStdDevs = 6
 bsNumEnv = OptPricer.BSMNumEnv { OptPricer.m_nStdDevs = nStdDevs }
 
 -- BSM Price the option:
-runBSM ::  String -> Common.Px
+runBSM ::  String -> Maybe Common.Px
 runBSM     optSpecStr =
   OptPricer.bsmPricer   diff rTF divsTF bsNumEnv (read optSpecStr) s t
 
-runMC ::   String -> String -> Common.Px
+runMC ::   String -> String -> Maybe Common.Px
 runMC      optSpecStr mcNumEnvStr =
   MonteCarlo.mcPricer1D diff rTF divsTF (read mcNumEnvStr) (read optSpecStr) s t
 

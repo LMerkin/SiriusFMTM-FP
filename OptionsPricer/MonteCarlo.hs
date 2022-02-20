@@ -54,13 +54,19 @@ mcPricer1D :: MCPricer1D
 mcPricer1D diff irModel divsModel numEnv optSpec s t
   | onFut && (not zeroDivs)                    =
       error  "mcPricer1D: Dividents must be Const0 on Futures"
-  | t >  expTime =
-      -- This is unsupported yet:
-      error ("mcPricer1D: curr" ++ (show t) ++ " is beyond exp" ++
-            (show expTime))
   | otherwise =
-      -- GENERIC CASE:
-      mcOptPx1D diff irModel divsModel numEnv optSpec s t
+      -- European Exercise is required. This is because the curr Monte-Carlo
+      -- method is unsuitable for pricing American or Bermudan options:
+      case Contracts.m_exerciseTimes optSpec of
+        Contracts.European expTime ->
+          if t >  expTime
+          then
+            error ("mcPricer1D: curr" ++ (show t) ++ " is beyond exp" ++
+                  (show expTime))
+          else
+            -- Run the MC Pricer:
+            Just (mcOptPx1D diff irModel divsModel numEnv optSpec s t)
+        _ -> Nothing
   where
   -- Underlying Type: Futures or Spot? (XXX: Options on Options are not yet
   -- supported):
@@ -68,15 +74,6 @@ mcPricer1D diff irModel divsModel numEnv optSpec s t
   onFut    =  Contracts.isOnFutures optSpec
   zeroDivs :: Bool
   zeroDivs = (Common.getConstTF divsModel) == 0.0
-
-  -- Exercise Time must be European, same as Expiration Time. This is because
-  -- the curr Monte-Carlo method is unsuitable for pricing American or Bermudan
-  -- options:
-  expTime :: Common.Time
-  expTime =
-    case Contracts.m_exerciseTimes optSpec of
-      Contracts.European t -> t
-      _ -> error "mcPricer1D: European Exercise is required"
 
 -------------------------------------------------------------------------------
 -- "mcOptPx1D":                                                              --
