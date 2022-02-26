@@ -16,7 +16,7 @@ g    _ _         = error "g: Dim=1 is required"
 
 xg0 = [0.0]
 tg0 = 0.0
-tg1 = 1.4
+tg1 = 1.5
 
 eps = 1e-9
 

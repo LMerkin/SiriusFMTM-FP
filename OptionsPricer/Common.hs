@@ -6,7 +6,7 @@
 module Common
 (
   assert,
-  Time,     mkTimeY,   getTimeY,
+  Time,     mkTimeY,   m_getTimeY,
   TFunc,    mkConstTF, mkStepsTF,      mkLinSegmsTF, getConstTF,
   mapTFunc, evalTFunc, integrateTFunc, Px(..),       Expr(..),   mkFunc
 )
@@ -21,7 +21,8 @@ assert    False   _ =  error "Assert Failure"
 ------------------------------------------------------------------------------
 -- "Time" as a Fractional Year in UTC:                                      --
 ------------------------------------------------------------------------------
-newtype Time   = Time Double deriving(Read, Show, Eq, Ord);  -- E.g. 2022.12345
+newtype Time = Time { m_getTimeY :: Double} -- E.g. 2022.12345
+  deriving(Read, Show, Eq, Ord);
 
 mkTimeY :: Double -> Time
 mkTimeY yf
@@ -30,12 +31,6 @@ mkTimeY yf
 
 -- TODO: WallClock -> Time conversion
 -- Year Fraction Convention: ACT/365.25 valid for the whole 20th and 21st Cents
-
-getTimeY :: Time -> Double
-getTimeY   (Time t) = t
-
--- newtype DeltaT = DeltaT Double deriving(Show, Eq, Ord);
--- TODO: +- of Time and DeltaT
 
 ------------------------------------------------------------------------------
 -- "TFunc":                                                                 --
@@ -228,7 +223,7 @@ integrateTFunc f           ta@(Time a) tb@(Time b)
 ------------------------------------------------------------------------------
 -- NB: We allow negative Px vals as well:
 --
-newtype Px = Px Double deriving (Read, Show, Eq, Ord)
+newtype Px = Px {m_getPxVal :: Double} deriving (Read, Show, Eq, Ord)
 
 -------------------------------------------------------------------------------
 -- Symbolic Exprs:                                                           --
