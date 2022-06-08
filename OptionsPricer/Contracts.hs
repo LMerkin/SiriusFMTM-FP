@@ -8,16 +8,106 @@ where
 
 import qualified Common
 
+-------------------------------------------------------------------------------`-- Tenors (mainly for IRPs):                                                 --
+-------------------------------------------------------------------------------
+-- NB: M12 and Y1 are same:
+--
+data Tenor =
+    ON | W1  | W2
+  | M1 | M2  | M3 | M6 | M9 | M12
+  | Y1 | M18 | Y2 | Y3 | Y5 | Y7  | Y10
+  deriving(Read, Show, Eq)
+
+-------------------------------------------------------------------------------
+-- "addTenor":                                                               --
+-------------------------------------------------------------------------------
+-- Applying Tenors to Dates:
+--
+addTenor :: Common.Date -> Tenor -> Common.Date
+addTenor date@(year, month, day)  tenor =
+  let
+    -- "adjustDateD": Date adjustment in case the DAY was incremented and is
+    -- over the month boundary:
+    adjustDateD :: Int -> Int -> Int -> Common.Date
+    adjustDateD y m d =
+      let
+        dm = Common.daysInMonth y m
+      in
+      if d > dm
+      then
+        let
+          m' = m + 1
+          d' = d - dm
+        in
+          if m' > 12 then (y + 1, 1, d') else (y, m', d')
+      else
+        -- The date is valid as is:
+        (y, m, d)
+
+    -- "adjustDateM": Date adjustment in case the MONTH was incremented, and
+    -- as a result, the day is over the month boundary; in that case, we set
+    -- the day as the last day of that month:
+    adjustDateM :: Int -> Int -> Int -> Common.Date
+    adjustDateM y m d  =
+      let dm = Common.daysInMonth y m
+      in  if d > dm then (y, m, dm)  else (y, m, d)
+
+    -- "adjustDateY": After the YEAR was incremented; this can only cause pro-
+    -- blems for 29.02:
+    adjustDateY :: Int -> Int -> Int -> Common.Date
+    adjustDateY y m d  =
+      if  m == 2 && d > Common.daysInMonth y 2
+      then (y, 2, 28)
+      else (y, m,  d)
+
+    -- Apply the Tenor:
+    date' =
+      Common.assert (Common.isValidDate date)
+      (case tenor of
+        ON  -> adjustDateD  year        month      (day +  1)
+        W1  -> adjustDateD  year        month      (day +  7)
+        W2  -> adjustDateD  year        month      (day + 14)
+        M1  -> adjustDateM  year       (month + 1)  day
+        M2  -> adjustDateM  year       (month + 2)  day
+        M3  -> adjustDateM  year       (month + 3)  day
+        M6  -> adjustDateM  year       (month + 6)  day
+        M12 -> adjustDateY (year + 1)   month       day
+        Y1  -> adjustDateY (year + 1)   month       day
+        M18 ->
+          let (y, m, d) =  adjustDateM year (month + 6) day
+          in  adjustDateY  (y+1) m d
+        Y2  -> adjustDateY (year + 2)   month       day
+        Y3  -> adjustDateY (year + 3)   month       day
+        Y5  -> adjustDateY (year + 5)   month       day
+        Y7  -> adjustDateY (year + 7)   month       day
+        Y10 -> adjustDateY (year + 10)  month       day)
+  in
+    -- Apply the Business Day correction (always moving forward). XXX: Not imp-
+    -- lemented yet, as requires a business calendar for a particulr jurisdict-
+    -- ion:
+    Common.assert (Common.isValidDate date') date'
+
 -------------------------------------------------------------------------------
 -- Financial Contracts:                                                      --
 -------------------------------------------------------------------------------
+-- NB: In all cases below, String is InstrName:
+--
 data Contract =
-    Spot    String                    -- InstrName
-  | Futures String  Common.Time       -- InstrName, ExpirTime
-  | Option  String  OptionSpec
-  -- TODO:  Swap???
-  -- Cannot derive Show or Eq: OptionSpec.PayOffFunc may contain a lambda!
-  deriving (Read, Show)
+  -- Equity, FX or Commodity Contracts:
+    Spot     String
+  | Futures  String  Common.Time     -- ExpirTime
+  | Option   String  OptionSpec
+  | IRP      String  IRP
+  -- Cannot derive Eq: OptionSpec.PayOffFunc may contain a lambda!
+  deriving (Read, Show, Eq)
+
+-- Specifically for Interest Rate Products:
+-- XXX: No Notional is currently specified for IRS, we are interested in rates
+-- only:
+data IRP =
+    FwdLIBOR         Common.Date Tenor  -- StartDate, Tenor
+  | FwdClassicalIRS  [Common.Date]      -- (Quarterly)Floating Leg Schedule
+  deriving (Read, Show, Eq)
 
 -------------------------------------------------------------------------------
 -- "PayOffFunc" for Options:                                                 --
@@ -29,7 +119,7 @@ data PayOffFunc =
   | BinPut  Common.Px    Common.Px   -- Strike, Notional
   | LinearC [ (Double,   PayOffFunc) ]
   | AnyPOF  (Common.Expr Double    ) -- Actually, this is Px, not raw Double!
-  deriving (Read, Show)
+  deriving (Read, Show,  Eq)
 
 -------------------------------------------------------------------------------
 -- "evalPayOffFunc":                                                         --
@@ -103,8 +193,8 @@ data OptionSpec =
     m_loBarrier     :: Barrier,
     m_upBarrier     :: Barrier
   }
-  deriving (Read, Show)
- 
+  deriving (Read, Show, Eq)
+
 -------------------------------------------------------------------------------
 -- "isOnFutures": Whether the Option is on Futures:                          --
 -------------------------------------------------------------------------------

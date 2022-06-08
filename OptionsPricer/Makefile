@@ -5,3 +5,6 @@ SRCS  = Common.hs     Contracts.hs Diffusions.hs   Main.hs \
 OptPricerTest: $(SRCS)
 	ghc $(HOPTS) -o $@ Main.hs
 
+clean:
+	rm -f *.hi *.o OptPricerTest
+

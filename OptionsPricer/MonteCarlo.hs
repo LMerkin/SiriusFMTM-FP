@@ -52,7 +52,7 @@ type MCPricer1D =
 -------------------------------------------------------------------------------
 mcPricer1D :: MCPricer1D
 mcPricer1D diff irModel divsModel numEnv optSpec s t
-  | onFut && (not zeroDivs)                    =
+  | onFut && (not zeroDivs) =
       error  "mcPricer1D: Dividents must be Const0 on Futures"
   | otherwise =
       -- European Exercise is required. This is because the curr Monte-Carlo
@@ -64,7 +64,11 @@ mcPricer1D diff irModel divsModel numEnv optSpec s t
             error ("mcPricer1D: curr" ++ (show t) ++ " is beyond exp" ++
                   (show expTime))
           else
-            -- Run the MC Pricer:
+            -- XXX: We do NOT consider the special case t == expTime here, as
+            -- it would be difficult to specify the KnockIn/Out  conds  right
+            -- now. Instead, running a full MC with 0-length path is OK:
+            --
+            -- Run the actual MC Pricer:
             Just (mcOptPx1D diff irModel divsModel numEnv optSpec s t)
         _ -> Nothing
   where
@@ -181,7 +185,7 @@ mcOptPx1D diff irModel divsModel numEnv optSpec s t = Common.Px discExpPayOff
 
   -- Integrated Interest Rate and Discount Factor (t .. expT):
   rInt  :: Double
-  rInt  =  Common.integrateTFunc irModel t tExp
+  (rInt, _, _) = Common.integrateTFunc irModel t tExp
 
   -- Discount Factor wrt "r" (or "rB" for FX):
   rDF   :: Double

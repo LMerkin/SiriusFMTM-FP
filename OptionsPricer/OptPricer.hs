@@ -44,11 +44,11 @@ type FwdDivsModel = Common.TFunc  -- Fwd Divs Rate Curve
 -- BSM Numerical Environment:
 -- Only required when we perform numerical integration of Green's Functions:
 --
-data BSMNumEnv   = BSMNumEnv { m_nStdDevs :: Double }
-dummyBSMNumEnv   = BSMNumEnv { m_nStdDevs =  0.0 }
+newtype BSMNumEnv = BSMNumEnv { m_nStdDevs :: Double }
+dummyBSMNumEnv    = BSMNumEnv { m_nStdDevs =  0.0 }
 
 -- It requires a "Diff1D":
-type BSMPricer   = Pricer Diffusions.Diff1D FwdIRModel FwdDivsModel BSMNumEnv
+type BSMPricer    = Pricer Diffusions.Diff1D FwdIRModel FwdDivsModel BSMNumEnv
 
 -------------------------------------------------------------------------------
 -- "bsmPricer": "BSMPricer" Instance:                                        --
@@ -125,7 +125,7 @@ bsmOptPx   (Contracts.Call (Common.Px strike)) onFut expT volTF rTF divsTF
 
   -- Integrated Quadratic Variance:
   var   :: Double
-  var  =   Common.integrateTFunc varTF currT expT
+  (var, _, _) = Common.integrateTFunc varTF currT expT
 
   -- Effective Standard Deviation: (sigma * sqrt(tau)):
   std   :: Double
@@ -133,7 +133,7 @@ bsmOptPx   (Contracts.Call (Common.Px strike)) onFut expT volTF rTF divsTF
 
   -- Integrated Interest Rate:
   rInt  :: Double
-  rInt  =  Common.integrateTFunc rTF    currT expT
+  (rInt, _, _) = Common.integrateTFunc rTF    currT expT
 
   -- Discount Factor wrt "r" (or "rB" for FX):
   rDF   :: Double
@@ -141,7 +141,7 @@ bsmOptPx   (Contracts.Call (Common.Px strike)) onFut expT volTF rTF divsTF
 
   -- Integrated Dividends Rate:
   dInt  :: Double
-  dInt  =  Common.integrateTFunc divsTF currT expT
+  (dInt, _, _) = Common.integrateTFunc divsTF currT expT
 
   -- Discount Factor wrt "d" (or "rA" for FX):
   dDF   :: Double
@@ -174,13 +174,16 @@ bsmOptPx   (Contracts.Put k@(Common.Px strike)) onFut expT volTF rTF divsTF
            _ s@(Common.Px currS) currT =
   Common.Px (callPx  - fwdVal)
   where
+  -- Using Put-Call Parity:
   callPx :: Double
   Common.Px callPx =
     bsmOptPx (Contracts.Call k) onFut expT volTF rTF divsTF
              dummyBSMNumEnv  s  currT
 
+  rInt   :: Double
+  (rInt, _, _) = Common.integrateTFunc rTF currT expT
   fwdVal :: Double
-  fwdVal =  currS - strike * exp (- (Common.integrateTFunc rTF currT expT))
+  fwdVal =  currS - strike * exp (- rInt)
 
 --
 -- Any Linear Combination of Other PayOffs:
@@ -212,12 +215,14 @@ bsmOptPx (Contracts.AnyPOF phi) onFut expT volTF rTF divsTF numEnv
   varTF =  Common.mapTFunc (\sigma -> sigma * sigma) volTF
 
   -- Integrated Quadratic Variance, halved (aka tau(t..T)):
+  vInt  :: Double
+  (vInt, _, _) = Common.integrateTFunc varTF currT expT
   tau   :: Double
-  tau  =   0.5 * Common.integrateTFunc varTF currT expT
+  tau  =   0.5 * vInt
 
   -- Integrated Interest Rate:
   rInt  :: Double
-  rInt  =  Common.integrateTFunc rTF    currT expT
+  (rInt, _, _) = Common.integrateTFunc rTF    currT expT
 
   -- Discount Factor wrt "r" (or "rB" for FX):
   rDF   :: Double
@@ -225,7 +230,7 @@ bsmOptPx (Contracts.AnyPOF phi) onFut expT volTF rTF divsTF numEnv
 
   -- Integrated Dividends Rate:
   dInt  :: Double
-  dInt  =  Common.integrateTFunc divsTF currT expT
+  (dInt, _, _) = Common.integrateTFunc divsTF currT expT
 
   -- Integrated         beta = r - d - sigma^2/2
   -- if "onFut" is set, beta = - sigma^2/2:
