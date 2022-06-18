@@ -439,4 +439,3 @@ mkFunc (Cos   e)     = \x -> cos ((mkFunc e)  x)
 mkFunc (Min   e1 e2) = \x -> min ((mkFunc e1) x) ((mkFunc e2) x)
 mkFunc (Max   e1 e2) = \x -> max ((mkFunc e1) x) ((mkFunc e2) x)
 
-

@@ -120,3 +120,5 @@ main :: IO ()
 main = do
   putStrLn (show(f4 (1, 2)))
 
+g x = x + 1
+h   = \x -> x + 1

@@ -4,7 +4,7 @@ module SymDiff (AST, diff, simplifyFP, mkFunc, test)
 where
 
 -- Symbolic representation of algebrac expressions:
-data AST a =
+data AST  a =
     X
   | Const a
   | Add  (AST a) (AST a)
